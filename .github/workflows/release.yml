@@ -1,0 +1,115 @@
+name: Build & Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-36
+            build-tools;36.0.0
+
+      - name: Access Secrets
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          RABBITSTREAM_SOURCE_API: ${{ secrets.RABBITSTREAM_SOURCE_API }}
+        run: |
+          echo TMDB_API_KEY=$TMDB_API_KEY >> local.properties
+          echo RABBITSTREAM_SOURCE_API=$RABBITSTREAM_SOURCE_API >> local.properties
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      # --- Default (all layouts) build ---
+      - name: Build APK (Default)
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Sign APK (Default)
+        id: sign_apk
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.KEYSTORE }}
+          alias: ${{ secrets.SIGNING_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: "36.0.0"
+
+      - name: Save Default APK
+        run: |
+          mkdir -p release-apks
+          cp "${{ steps.sign_apk.outputs.signedReleaseFile }}" \
+             "release-apks/${{ github.event.repository.name }}-${{ github.ref_name }}.apk"
+
+      # --- Mobile-only build ---
+      - name: Build APK (Mobile)
+        run: |
+          echo APP_LAYOUT=mobile >> local.properties
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Sign APK (Mobile)
+        id: sign_apk_mobile
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.KEYSTORE }}
+          alias: ${{ secrets.SIGNING_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: "36.0.0"
+
+      - name: Save Mobile APK
+        run: |
+          cp "${{ steps.sign_apk_mobile.outputs.signedReleaseFile }}" \
+             "release-apks/${{ github.event.repository.name }}-${{ github.ref_name }}-only-mobile.apk"
+
+      # --- TV-only build ---
+      - name: Build APK (TV)
+        run: |
+          echo APP_LAYOUT=tv >> local.properties
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Sign APK (TV)
+        id: sign_apk_tv
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.KEYSTORE }}
+          alias: ${{ secrets.SIGNING_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: "36.0.0"
+
+      - name: Save TV APK
+        run: |
+          cp "${{ steps.sign_apk_tv.outputs.signedReleaseFile }}" \
+             "release-apks/${{ github.event.repository.name }}-${{ github.ref_name }}-only-tv.apk"
+
+      # --- Create GitHub Release with all APKs ---
+      - name: Create Release & Upload APKs
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-apks/*.apk
